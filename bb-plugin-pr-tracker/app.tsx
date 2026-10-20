@@ -8,6 +8,16 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 60_000;
+const COLLAPSE_KEY = "bb-plugin-pr-tracker:collapsed-repos";
+
+function readCollapsed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    return new Set(raw === null ? [] : (JSON.parse(raw) as string[]));
+  } catch {
+    return new Set();
+  }
+}
 
 const dot: Record<Pr["checks"], string> = {
   pass: "bg-green-500",
@@ -114,6 +124,21 @@ function PrPanel() {
     repos: string[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
+
+  const toggleRepo = useCallback((repo: string) => {
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      if (next.has(repo)) next.delete(repo);
+      else next.add(repo);
+      try {
+        localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]));
+      } catch {
+        // Storage may be unavailable; collapsing still works for this session.
+      }
+      return next;
+    });
+  }, []);
 
   const refetch = useCallback(() => {
     rpc.call("prs_list").then(
@@ -165,12 +190,28 @@ function PrPanel() {
       ) : null}
       {[...byRepo].map(([repo, prs]) => (
         <section key={repo}>
-          <h3 className="bg-muted/40 px-3 py-1.5 text-xs font-semibold">{repo}</h3>
-          <ul className="divide-y divide-border">
-            {prs.map((pr) => (
-              <PrRow key={pr.number} pr={pr} onChanged={refetch} />
-            ))}
-          </ul>
+          <button
+            type="button"
+            aria-expanded={!collapsed.has(repo)}
+            onClick={() => toggleRepo(repo)}
+            className="flex w-full items-center gap-1.5 bg-muted/40 px-3 py-1.5 text-left text-xs font-semibold hover:bg-muted/60"
+          >
+            <Icon
+              name={collapsed.has(repo) ? "ChevronRight" : "ChevronDown"}
+              className="size-3.5 shrink-0 text-muted-foreground"
+            />
+            <span className="truncate">{repo}</span>
+            <span className="ml-auto shrink-0 font-normal text-muted-foreground">
+              {prs.length}
+            </span>
+          </button>
+          {collapsed.has(repo) ? null : (
+            <ul className="divide-y divide-border">
+              {prs.map((pr) => (
+                <PrRow key={pr.number} pr={pr} onChanged={refetch} />
+              ))}
+            </ul>
+          )}
         </section>
       ))}
     </div>
