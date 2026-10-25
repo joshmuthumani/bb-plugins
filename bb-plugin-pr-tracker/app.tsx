@@ -162,8 +162,8 @@ function PrPanel() {
   }
 
   return (
-    <div className="flex flex-col">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
         <span className="text-xs text-muted-foreground">
           {data === null ? "Loading…" : `${data.prs.length} open`}
         </span>
@@ -171,49 +171,51 @@ function PrPanel() {
           <Icon name="RefreshCw" className="size-4" />
         </Button>
       </div>
-      {error === null ? null : (
-        <p role="alert" className="px-3 py-2 text-xs text-destructive">
-          {error}
-        </p>
-      )}
-      {data?.errors.map((e) => (
-        <p key={e} role="alert" className="px-3 py-2 text-xs text-destructive">
-          {e}
-        </p>
-      ))}
-      {data !== null && data.repos.length === 0 ? (
-        <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-          No repositories set. Run{" "}
-          <code>bb plugin config pr-tracker</code> and set <code>repos</code> to{" "}
-          <code>owner/repo,owner/repo</code>.
-        </p>
-      ) : null}
-      {[...byRepo].map(([repo, prs]) => (
-        <section key={repo}>
-          <button
-            type="button"
-            aria-expanded={!collapsed.has(repo)}
-            onClick={() => toggleRepo(repo)}
-            className="flex w-full items-center gap-1.5 bg-muted/40 px-3 py-1.5 text-left text-xs font-semibold hover:bg-muted/60"
-          >
-            <Icon
-              name={collapsed.has(repo) ? "ChevronRight" : "ChevronDown"}
-              className="size-3.5 shrink-0 text-muted-foreground"
-            />
-            <span className="truncate">{repo}</span>
-            <span className="ml-auto shrink-0 font-normal text-muted-foreground">
-              {prs.length}
-            </span>
-          </button>
-          {collapsed.has(repo) ? null : (
-            <ul className="divide-y divide-border">
-              {prs.map((pr) => (
-                <PrRow key={pr.number} pr={pr} onChanged={refetch} />
-              ))}
-            </ul>
-          )}
-        </section>
-      ))}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {error === null ? null : (
+          <p role="alert" className="px-3 py-2 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        {data?.errors.map((e) => (
+          <p key={e} role="alert" className="px-3 py-2 text-xs text-destructive">
+            {e}
+          </p>
+        ))}
+        {data !== null && data.repos.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+            No repositories set. Run{" "}
+            <code>bb plugin config pr-tracker</code> and set <code>repos</code> to{" "}
+            <code>owner/repo,owner/repo</code>.
+          </p>
+        ) : null}
+        {[...byRepo].map(([repo, prs]) => (
+          <section key={repo}>
+            <button
+              type="button"
+              aria-expanded={!collapsed.has(repo)}
+              onClick={() => toggleRepo(repo)}
+              className="flex w-full items-center gap-1.5 bg-muted/40 px-3 py-1.5 text-left text-xs font-semibold hover:bg-muted/60"
+            >
+              <Icon
+                name={collapsed.has(repo) ? "ChevronRight" : "ChevronDown"}
+                className="size-3.5 shrink-0 text-muted-foreground"
+              />
+              <span className="truncate">{repo}</span>
+              <span className="ml-auto shrink-0 font-normal text-muted-foreground">
+                {prs.length}
+              </span>
+            </button>
+            {collapsed.has(repo) ? null : (
+              <ul className="divide-y divide-border">
+                {prs.map((pr) => (
+                  <PrRow key={pr.number} pr={pr} onChanged={refetch} />
+                ))}
+              </ul>
+            )}
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
