@@ -109,13 +109,11 @@ export default async function plugin(bb: BbPluginApi) {
       default: "",
     },
   });
-  const readRepos = async () => {
-    const { repos } = await settings.get();
-    return repos
-      .split(",")
-      .map((r) => r.trim())
-      .filter((r) => REPO.test(r));
-  };
+  // Canonicalize configured repos before use: when a repo is transferred to a
+  // new owner, GitHub 404s /repos/<old>/installation (the endpoint gh-bot-token
+  // hits), so resolve the current owner here and cache it briefly.
+  const repoCache = new Map<string, { canonical: string; at: number }>();
+  const REPO_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
   async function gh(args: string[], extraEnv: Record<string, string> = {}) {
     const { stdout } = await run("gh", args, {
@@ -125,6 +123,38 @@ export default async function plugin(bb: BbPluginApi) {
     });
     return stdout;
   }
+
+  // Resolve "owner/repo" to its current canonical owner/repo, following GitHub's
+  // transfer redirect. Falls back to the configured value so a transient lookup
+  // failure surfaces as the downstream command's own error instead of dropping
+  // the repo.
+  async function resolveRepo(repo: string): Promise<string> {
+    const cached = repoCache.get(repo);
+    if (cached && Date.now() - cached.at < REPO_CACHE_TTL) return cached.canonical;
+    try {
+      const out = await gh([
+        "repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner",
+      ]);
+      const canonical = out.trim();
+      if (REPO.test(canonical)) {
+        repoCache.set(repo, { canonical, at: Date.now() });
+        return canonical;
+      }
+    } catch {
+      // Fall through: keep the configured value.
+    }
+    return repo;
+  }
+
+  const readRepos = async () => {
+    const { repos } = await settings.get();
+    const configured = repos
+      .split(",")
+      .map((r) => r.trim())
+      .filter((r) => REPO.test(r));
+    const resolved = await Promise.all(configured.map((r) => resolveRepo(r)));
+    return [...new Set(resolved)];
+  };
 
   async function fetchPrs(repo: string): Promise<Pr[]> {
     const out = await gh([
@@ -182,28 +212,30 @@ export default async function plugin(bb: BbPluginApi) {
     },
 
     pr_merge: async ({ repo, number }) => {
+      // Resolve a possibly-transferred repo to its current owner first.
+      const canonical = await resolveRepo(repo);
       // Allowlist: only repos the user configured can be merged into.
-      if (!(await readRepos()).includes(repo)) {
+      if (!(await readRepos()).includes(canonical)) {
         throw new Error(`${repo} is not a tracked repository`);
       }
       // Re-check server-side; never trust the button's enabled state.
-      const pr = (await fetchPrs(repo)).find((p) => p.number === number);
+      const pr = (await fetchPrs(canonical)).find((p) => p.number === number);
       if (pr === undefined) throw new Error(`PR #${number} is not open`);
       if (pr.mergeBlocker !== null) throw new Error(pr.mergeBlocker);
 
       // Token stays in this variable: never logged, never returned.
       const { stdout } = await run(
         join(homedir(), ".claude/bin/gh-bot-token"),
-        [repo],
+        [canonical],
         { env: { ...process.env, PATH }, timeout: 30_000 },
       );
       const token = stdout.trim();
       if (token === "") throw new Error("gh-bot-token returned no token");
 
-      await gh(["pr", "merge", String(number), "-R", repo, "--squash"], {
+      await gh(["pr", "merge", String(number), "-R", canonical, "--squash"], {
         GH_TOKEN: token,
       });
-      bb.log.info(`merged ${repo}#${number}`);
+      bb.log.info(`merged ${canonical}#${number}`);
       return { merged: true };
     },
   });
