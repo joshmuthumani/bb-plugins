@@ -9,6 +9,7 @@ BB plugins maintained by Josh Muthumani. Each plugin lives in its own
 | Plugin | Directory | Install tag prefix |
 | --- | --- | --- |
 | PR Tracker — open pull requests with check status and a Merge button in the right panel | `bb-plugin-pr-tracker` | `pr-tracker-` |
+| LSP — TypeScript/JavaScript hover, completion, and diagnostics in a Monaco file editor | `bb-plugin-lsp` | `lsp-` |
 
 ## Install
 
