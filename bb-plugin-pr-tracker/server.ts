@@ -230,11 +230,11 @@ export default async function plugin(bb: BbPluginApi) {
       if (login && (r.reviewRequests ?? []).some((q) => q.login === login)) {
         needsYou.unshift("Review requested from you");
       }
-      const approvedByMe =
-        !!login &&
-        (r.reviews ?? []).some(
-          (v) => v.author.login === login && v.state === "APPROVED" && v.commit?.oid === r.headRefOid,
-        );
+      // Reviews come oldest first; a later CHANGES_REQUESTED overrides an earlier approval.
+      const mine = (r.reviews ?? []).filter(
+        (v) => v.author.login === login && v.commit?.oid === r.headRefOid && v.state !== "COMMENTED",
+      );
+      const approvedByMe = !!login && mine.at(-1)?.state === "APPROVED";
       const bindingBlocked = list.some((c) => BINDING_CHECK.test(c.name) && c.state !== "pass");
       // GitHub rejects approving your own PR, so never offer it.
       const canApprove = !!login && r.author.login !== login;
