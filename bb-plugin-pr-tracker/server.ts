@@ -212,7 +212,7 @@ export default async function plugin(bb: BbPluginApi) {
       const needsYou = list
         .filter((c) => c.state === "action")
         .map((c) => `Approval needed: ${c.name}`);
-      if (login && r.reviewRequests.some((q) => q.login === login)) {
+      if (login && (r.reviewRequests ?? []).some((q) => q.login === login)) {
         needsYou.unshift("Review requested from you");
       }
       return {
@@ -294,6 +294,9 @@ export default async function plugin(bb: BbPluginApi) {
       }
       if (res.status === "failed") throw new Error(res.details.message ?? "Merge failed");
       if (res.status === "pending") throw new Error("Merge still pending after 60s; refresh to check");
+      if (res.status !== "merged" && res.status !== "enqueued") {
+        throw new Error(`Unexpected merge status: ${res.status}`);
+      }
       bb.log.info(`${res.status} ${canonical}#${number}`);
       // "enqueued" means added to the merge queue, not merged yet.
       return { merged: res.status === "merged" };
