@@ -41,6 +41,7 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [armedApprove, setArmedApprove] = useState(false);
 
   const merge = async () => {
     setBusy(true);
@@ -55,6 +56,26 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
       setBusy(false);
     }
   };
+
+  const approve = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await rpc.call("pr_approve", { repo: pr.repo, number: pr.number });
+      onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setArmedApprove(false);
+      setBusy(false);
+    }
+  };
+  const approveLabel =
+    pr.action === "approve"
+      ? "Approve"
+      : pr.action === "rerun"
+        ? "Re-run review"
+        : "Approve & re-run review";
 
   return (
     <li className="space-y-1.5 px-3 py-2.5 text-sm">
@@ -149,6 +170,33 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
           <span className="text-xs text-muted-foreground">{pr.mergeBlocker}</span>
         ) : null}
       </div>
+      {pr.action === null ? null : (
+        <div className="flex items-center gap-2 pl-4">
+          {armedApprove ? (
+            <>
+              <Button size="sm" disabled={busy} onClick={approve}>
+                {busy ? "Working…" : `Confirm: ${approveLabel.toLowerCase()}`}
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setArmedApprove(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <span
+              title={
+                pr.action === "rerun"
+                  ? "You already approved this commit; re-run the review so the bot re-checks"
+                  : "Approve as you, then re-run the review if a Binding approval check is blocking"
+              }
+            >
+              <Button size="sm" variant="outline" onClick={() => setArmedApprove(true)}>
+                <Icon name="ShieldCheck" className="size-3.5" />
+                {approveLabel}
+              </Button>
+            </span>
+          )}
+        </div>
+      )}
       {error === null ? null : (
         <p role="alert" className="pl-4 text-xs text-destructive">
           {error}
