@@ -40,6 +40,7 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   const merge = async () => {
     setBusy(true);
@@ -78,8 +79,49 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
               {pr.failing.join(", ")}
             </p>
           ) : null}
+          {pr.needsYou.map((note) => (
+            <p key={note} className="truncate text-xs font-medium text-yellow-600" title={note}>
+              {note}
+            </p>
+          ))}
         </div>
+        {pr.list.length > 0 ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-expanded={open}
+            aria-label={open ? "Hide checks" : "Show checks"}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
+      {open ? (
+        <ul className="space-y-1 pl-4 text-xs">
+          {pr.list.map((c) => (
+            <li key={c.name} className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  c.state === "pass" && "bg-green-500",
+                  c.state === "fail" && "bg-destructive",
+                  c.state === "pending" && "bg-yellow-500 animate-pulse",
+                  c.state === "action" && "bg-yellow-500",
+                )}
+              />
+              {c.url ? (
+                <a href={c.url} target="_blank" rel="noreferrer" className="truncate hover:underline" title={c.name}>
+                  {c.name}
+                </a>
+              ) : (
+                <span className="truncate">{c.name}</span>
+              )}
+              {c.state === "action" ? <span className="text-yellow-600">needs approval</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="flex items-center gap-2 pl-4">
         {armed ? (
           <>

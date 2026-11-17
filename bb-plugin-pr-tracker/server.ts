@@ -4,6 +4,7 @@
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -11,6 +12,11 @@ import { z } from "zod";
 const run = promisify(execFile);
 
 const checkState = z.enum(["pass", "fail", "pending", "none"]);
+const checkItem = z.object({
+  name: z.string(),
+  state: z.enum(["pass", "fail", "pending", "action"]),
+  url: z.string().nullable(),
+});
 const prSchema = z.object({
   repo: z.string(),
   number: z.number(),
@@ -25,6 +31,8 @@ const prSchema = z.object({
   counts: z.object({ pass: z.number(), fail: z.number(), pending: z.number() }),
   failing: z.array(z.string()),
   mergeBlocker: z.string().nullable(),
+  list: z.array(checkItem),
+  needsYou: z.array(z.string()),
 });
 export type Pr = z.infer<typeof prSchema>;
 
@@ -57,22 +65,33 @@ type RawCheck = {
   state?: string;
   name?: string;
   context?: string;
+  detailsUrl?: string;
+  targetUrl?: string;
 };
 
 // Fold CheckRun and StatusContext entries into pass/fail/pending counts.
+// "action" = a gated run waiting on a human (environment approval, first-time
+// contributor); it counts as pending, never as a failure.
 function summarize(rollup: RawCheck[]) {
   const counts = { pass: 0, fail: 0, pending: 0 };
   const failing: string[] = [];
+  const list: z.infer<typeof checkItem>[] = [];
   for (const c of rollup) {
-    const label = c.name ?? c.context ?? "check";
+    const name = c.name ?? c.context ?? "check";
+    const url = c.detailsUrl || c.targetUrl || null;
     const outcome = c.conclusion ?? c.state ?? "";
-    if (c.status && c.status !== "COMPLETED") counts.pending++;
-    else if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(outcome)) counts.pass++;
-    else if (["PENDING", "EXPECTED", ""].includes(outcome)) counts.pending++;
-    else {
+    let state: z.infer<typeof checkItem>["state"];
+    if (c.status === "WAITING" || outcome === "ACTION_REQUIRED") state = "action";
+    else if (c.status && c.status !== "COMPLETED") state = "pending";
+    else if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(outcome)) state = "pass";
+    else if (["PENDING", "EXPECTED", ""].includes(outcome)) state = "pending";
+    else state = "fail";
+    if (state === "pass") counts.pass++;
+    else if (state === "fail") {
       counts.fail++;
-      failing.push(label);
-    }
+      failing.push(name);
+    } else counts.pending++;
+    list.push({ name, state, url });
   }
   const checks: Pr["checks"] =
     rollup.length === 0
@@ -82,7 +101,7 @@ function summarize(rollup: RawCheck[]) {
         : counts.pending > 0
           ? "pending"
           : "pass";
-  return { counts, failing, checks };
+  return { counts, failing, checks, list };
 }
 
 function blocker(p: {
@@ -156,11 +175,25 @@ export default async function plugin(bb: BbPluginApi) {
     return [...new Set(resolved)];
   };
 
+  let me: string | null = null;
+  async function viewer(): Promise<string | null> {
+    if (me) return me;
+    try {
+      me = (await gh(["api", "user", "--jq", ".login"])).trim();
+    } catch {
+      // Review-request detection is best effort.
+    }
+    return me;
+  }
+
   async function fetchPrs(repo: string): Promise<Pr[]> {
-    const out = await gh([
-      "pr", "list", "-R", repo, "--state", "open", "--limit", "30",
-      "--json",
-      "number,title,author,url,headRefName,isDraft,mergeable,reviewDecision,statusCheckRollup",
+    const [out, login] = await Promise.all([
+      gh([
+        "pr", "list", "-R", repo, "--state", "open", "--limit", "30",
+        "--json",
+        "number,title,author,url,headRefName,isDraft,mergeable,reviewDecision,statusCheckRollup,reviewRequests",
+      ]),
+      viewer(),
     ]);
     const rows = JSON.parse(out) as Array<{
       number: number;
@@ -172,9 +205,16 @@ export default async function plugin(bb: BbPluginApi) {
       mergeable: string;
       reviewDecision: string;
       statusCheckRollup: RawCheck[] | null;
+      reviewRequests: Array<{ login?: string }>;
     }>;
     return rows.map((r) => {
-      const { counts, failing, checks } = summarize(r.statusCheckRollup ?? []);
+      const { counts, failing, checks, list } = summarize(r.statusCheckRollup ?? []);
+      const needsYou = list
+        .filter((c) => c.state === "action")
+        .map((c) => `Approval needed: ${c.name}`);
+      if (login && r.reviewRequests.some((q) => q.login === login)) {
+        needsYou.unshift("Review requested from you");
+      }
       return {
         repo,
         number: r.number,
@@ -188,6 +228,8 @@ export default async function plugin(bb: BbPluginApi) {
         checks,
         counts,
         failing,
+        list,
+        needsYou,
         mergeBlocker: blocker({ draft: r.isDraft, mergeable: r.mergeable, checks }),
       };
     });
@@ -232,11 +274,29 @@ export default async function plugin(bb: BbPluginApi) {
       const token = stdout.trim();
       if (token === "") throw new Error("gh-bot-token returned no token");
 
-      await gh(["pr", "merge", String(number), "-R", canonical, "--squash"], {
-        GH_TOKEN: token,
-      });
-      bb.log.info(`merged ${canonical}#${number}`);
-      return { merged: true };
+      // Async merge API: the only one that merges stacked PRs (it also merges
+      // every open downstack PR). "default" keeps merge-queue behaviour.
+      const base = `repos/${canonical}/pulls/${number}/merge-async`;
+      const parse = (raw: string) =>
+        JSON.parse(raw) as { status: string; details: { uuid?: string; message?: string } };
+      let res = parse(
+        await gh(
+          ["api", "-X", "PUT", base, "-f", "merge_method=squash", "-f", "merge_action=default"],
+          { GH_TOKEN: token },
+        ),
+      );
+      // shortcut: polls ~60s, then gives up; the merge may still land, refresh to check.
+      for (let i = 0; i < 30 && res.status === "pending"; i++) {
+        const uuid = res.details.uuid;
+        if (!uuid) break;
+        await sleep(2000);
+        res = parse(await gh(["api", `${base}/${uuid}`], { GH_TOKEN: token }));
+      }
+      if (res.status === "failed") throw new Error(res.details.message ?? "Merge failed");
+      if (res.status === "pending") throw new Error("Merge still pending after 60s; refresh to check");
+      bb.log.info(`${res.status} ${canonical}#${number}`);
+      // "enqueued" means added to the merge queue, not merged yet.
+      return { merged: res.status === "merged" };
     },
   });
 }
