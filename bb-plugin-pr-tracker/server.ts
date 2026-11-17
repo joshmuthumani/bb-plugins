@@ -33,6 +33,8 @@ const prSchema = z.object({
   mergeBlocker: z.string().nullable(),
   list: z.array(checkItem),
   needsYou: z.array(z.string()),
+  // What the user can do to unblock the PR (see pr_approve). null = nothing.
+  action: z.enum(["approve", "approve_rerun", "rerun"]).nullable(),
 });
 export type Pr = z.infer<typeof prSchema>;
 
@@ -52,9 +54,20 @@ export const rpcContract = defineRpcContract({
     }),
     output: z.object({ merged: z.boolean() }),
   },
+  pr_approve: {
+    input: z.object({
+      repo: z.string(),
+      number: z.number().int().positive(),
+    }),
+    output: z.object({ approved: z.boolean(), rerun: z.boolean() }),
+  },
 });
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
+// Workflow whose re-run recomputes the "Binding approval" check once Josh has
+// approved the current head (see Brain decisions, 2026-10-09).
+const REVIEW_WORKFLOW = "Independent Review";
+const BINDING_CHECK = /binding approval/i;
 // The daemon's PATH may lack Homebrew; gh lives there.
 const PATH = `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`;
 
@@ -191,7 +204,7 @@ export default async function plugin(bb: BbPluginApi) {
       gh([
         "pr", "list", "-R", repo, "--state", "open", "--limit", "30",
         "--json",
-        "number,title,author,url,headRefName,isDraft,mergeable,reviewDecision,statusCheckRollup,reviewRequests",
+        "number,title,author,url,headRefName,headRefOid,isDraft,mergeable,reviewDecision,statusCheckRollup,reviewRequests,reviews",
       ]),
       viewer(),
     ]);
@@ -201,11 +214,13 @@ export default async function plugin(bb: BbPluginApi) {
       author: { login: string };
       url: string;
       headRefName: string;
+      headRefOid: string;
       isDraft: boolean;
       mergeable: string;
       reviewDecision: string;
       statusCheckRollup: RawCheck[] | null;
       reviewRequests: Array<{ login?: string }>;
+      reviews: Array<{ author: { login: string }; state: string; commit?: { oid: string } }>;
     }>;
     return rows.map((r) => {
       const { counts, failing, checks, list } = summarize(r.statusCheckRollup ?? []);
@@ -215,6 +230,24 @@ export default async function plugin(bb: BbPluginApi) {
       if (login && (r.reviewRequests ?? []).some((q) => q.login === login)) {
         needsYou.unshift("Review requested from you");
       }
+      const approvedByMe =
+        !!login &&
+        (r.reviews ?? []).some(
+          (v) => v.author.login === login && v.state === "APPROVED" && v.commit?.oid === r.headRefOid,
+        );
+      const bindingBlocked = list.some((c) => BINDING_CHECK.test(c.name) && c.state !== "pass");
+      // GitHub rejects approving your own PR, so never offer it.
+      const canApprove = !!login && r.author.login !== login;
+      const requested = !!login && (r.reviewRequests ?? []).some((q) => q.login === login);
+      const action: Pr["action"] = bindingBlocked
+        ? approvedByMe
+          ? "rerun"
+          : canApprove
+            ? "approve_rerun"
+            : null
+        : requested && !approvedByMe && canApprove
+          ? "approve"
+          : null;
       return {
         repo,
         number: r.number,
@@ -230,6 +263,7 @@ export default async function plugin(bb: BbPluginApi) {
         failing,
         list,
         needsYou,
+        action,
         mergeBlocker: blocker({ draft: r.isDraft, mergeable: r.mergeable, checks }),
       };
     });
@@ -305,6 +339,46 @@ export default async function plugin(bb: BbPluginApi) {
       bb.log.info(`${res.status} ${canonical}#${number}`);
       // "enqueued" means added to the merge queue, not merged yet.
       return { merged: res.status === "merged" };
+    },
+
+    // Approves as the signed-in user (the policy needs Josh's own review, not
+    // the bot's), then re-runs the review workflow so the bot re-evaluates.
+    pr_approve: async ({ repo, number }) => {
+      const canonical = await resolveRepo(repo);
+      if (!(await readRepos()).includes(canonical)) {
+        throw new Error(`${repo} is not a tracked repository`);
+      }
+      // Re-derive from fresh state; never trust the button.
+      const pr = (await fetchPrs(canonical)).find((p) => p.number === number);
+      if (pr === undefined) throw new Error(`PR #${number} is not open`);
+      if (pr.action === null) throw new Error("Nothing to approve on this PR");
+
+      let approved = false;
+      if (pr.action !== "rerun") {
+        await gh(["pr", "review", String(number), "-R", canonical, "--approve"]);
+        approved = true;
+        bb.log.info(`approved ${canonical}#${number}`);
+      }
+      if (pr.action === "approve") return { approved, rerun: false };
+
+      try {
+        const sha = (await gh(["api", `repos/${canonical}/pulls/${number}`, "--jq", ".head.sha"])).trim();
+        const runs = JSON.parse(
+          await gh([
+            "run", "list", "-R", canonical, "--commit", sha, "--limit", "50",
+            "--json", "databaseId,workflowName",
+          ]),
+        ) as Array<{ databaseId: number; workflowName: string }>;
+        // gh lists newest first.
+        const target = runs.find((x) => x.workflowName === REVIEW_WORKFLOW);
+        if (!target) throw new Error(`no "${REVIEW_WORKFLOW}" run found for this commit`);
+        await gh(["run", "rerun", String(target.databaseId), "-R", canonical]);
+        bb.log.info(`re-ran ${REVIEW_WORKFLOW} ${canonical}#${number}`);
+      } catch (cause) {
+        const why = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`${approved ? "Approved, but " : ""}re-run failed: ${why}`);
+      }
+      return { approved, rerun: true };
     },
   });
 }
