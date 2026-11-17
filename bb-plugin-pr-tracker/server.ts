@@ -239,15 +239,13 @@ export default async function plugin(bb: BbPluginApi) {
       // GitHub rejects approving your own PR, so never offer it.
       const canApprove = !!login && r.author.login !== login;
       const requested = !!login && (r.reviewRequests ?? []).some((q) => q.login === login);
-      const action: Pr["action"] = bindingBlocked
-        ? approvedByMe
-          ? "rerun"
-          : canApprove
-            ? "approve_rerun"
-            : null
-        : requested && !approvedByMe && canApprove
-          ? "approve"
-          : null;
+      let action: Pr["action"] = null;
+      if (bindingBlocked) {
+        if (approvedByMe) action = "rerun";
+        else if (canApprove) action = "approve_rerun";
+      } else if (requested && !approvedByMe && canApprove) {
+        action = "approve";
+      }
       return {
         repo,
         number: r.number,
