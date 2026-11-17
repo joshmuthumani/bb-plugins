@@ -290,7 +290,12 @@ export default async function plugin(bb: BbPluginApi) {
         const uuid = res.details.uuid;
         if (!uuid) break;
         await sleep(2000);
-        res = parse(await gh(["api", `${base}/${uuid}`], { GH_TOKEN: token }));
+        try {
+          res = parse(await gh(["api", `${base}/${uuid}`], { GH_TOKEN: token }));
+        } catch {
+          // The merge was accepted; only reading its status failed.
+          throw new Error("Merge was requested but its status could not be read; refresh to check");
+        }
       }
       if (res.status === "failed") throw new Error(res.details.message ?? "Merge failed");
       if (res.status === "pending") throw new Error("Merge still pending after 60s; refresh to check");

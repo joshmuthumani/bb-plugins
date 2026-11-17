@@ -99,8 +99,8 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
       </div>
       {open ? (
         <ul className="space-y-1 pl-4 text-xs">
-          {pr.list.map((c) => (
-            <li key={c.name} className="flex items-center gap-2">
+          {pr.list.map((c, i) => (
+            <li key={`${i}:${c.name}`} className="flex items-center gap-2">
               <span
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",
