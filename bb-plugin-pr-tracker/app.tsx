@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
 import type { Pr, rpcContract } from "./server";
+import { checksLabel } from "./checks-label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -26,17 +27,6 @@ const dot: Record<Pr["checks"], string> = {
   none: "bg-muted-foreground/40",
   skipped: "bg-muted-foreground/40",
 };
-
-function checksLabel(pr: Pr) {
-  const { pass, fail, pending, skipped } = pr.counts;
-  if (pr.checks === "none") return "No checks";
-  if (pr.checks === "skipped") return `${skipped} skipped`;
-  const parts = [`${pass} passed`];
-  if (fail > 0) parts.push(`${fail} failed`);
-  if (pending > 0) parts.push(`${pending} running`);
-  if (skipped > 0) parts.push(`${skipped} skipped`);
-  return parts.join(" · ");
-}
 
 function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
   const rpc = useRpc<typeof rpcContract>();

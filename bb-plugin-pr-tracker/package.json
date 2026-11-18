@@ -48,6 +48,6 @@
     "vaul": "^1.1.2"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test server.test.ts"
+    "test": "node --experimental-strip-types --test server.test.ts checks-label.test.ts"
   }
 }

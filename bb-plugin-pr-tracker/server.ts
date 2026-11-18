@@ -115,16 +115,12 @@ export function summarize(rollup: RawCheck[]) {
   }
   // Mixed pass + skipped stays "pass" (GitHub reports a skipped job as success);
   // only an all-skipped rollup gets its own aggregate, since nothing ran.
-  const checks: Pr["checks"] =
-    rollup.length === 0
-      ? "none"
-      : counts.fail > 0
-        ? "fail"
-        : counts.pending > 0
-          ? "pending"
-          : counts.pass > 0
-            ? "pass"
-            : "skipped";
+  let checks: Pr["checks"];
+  if (rollup.length === 0) checks = "none";
+  else if (counts.fail > 0) checks = "fail";
+  else if (counts.pending > 0) checks = "pending";
+  else if (counts.pass > 0) checks = "pass";
+  else checks = "skipped";
   return { counts, failing, checks, list };
 }
 
