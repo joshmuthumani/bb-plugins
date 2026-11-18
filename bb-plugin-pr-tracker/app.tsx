@@ -325,8 +325,21 @@ function PrPanel() {
   );
 }
 
+// threadPanelAction is retired from SDK >=0.6.94 typings but still served by the
+// host's legacy adapter; experimental_tab does not exist at the engines floor
+// (bbPluginSdk 0.6.49), so keep the call and type it locally.
+type LegacySlots = {
+  threadPanelAction(registration: {
+    id: string;
+    title: string;
+    icon: string;
+    component: typeof PrPanel;
+    layout: "flush" | "padded";
+  }): void;
+};
+
 export default definePluginApp((app) => {
-  app.slots.threadPanelAction({
+  (app.slots as typeof app.slots & LegacySlots).threadPanelAction({
     id: "prs",
     title: "Pull requests",
     icon: "GitPullRequest",
