@@ -11,10 +11,10 @@ import { z } from "zod";
 
 const run = promisify(execFile);
 
-const checkState = z.enum(["pass", "fail", "pending", "none"]);
+const checkState = z.enum(["pass", "fail", "pending", "skipped", "none"]);
 const checkItem = z.object({
   name: z.string(),
-  state: z.enum(["pass", "fail", "pending", "action"]),
+  state: z.enum(["pass", "fail", "pending", "action", "skipped"]),
   url: z.string().nullable(),
 });
 const prSchema = z.object({
@@ -28,7 +28,12 @@ const prSchema = z.object({
   mergeable: z.string(),
   review: z.string(),
   checks: checkState,
-  counts: z.object({ pass: z.number(), fail: z.number(), pending: z.number() }),
+  counts: z.object({
+    pass: z.number(),
+    fail: z.number(),
+    pending: z.number(),
+    skipped: z.number(),
+  }),
   failing: z.array(z.string()),
   mergeBlocker: z.string().nullable(),
   list: z.array(checkItem),
@@ -82,11 +87,11 @@ type RawCheck = {
   targetUrl?: string;
 };
 
-// Fold CheckRun and StatusContext entries into pass/fail/pending counts.
+// Fold CheckRun and StatusContext entries into pass/fail/pending/skipped counts.
 // "action" = a gated run waiting on a human (environment approval, first-time
 // contributor); it counts as pending, never as a failure.
-function summarize(rollup: RawCheck[]) {
-  const counts = { pass: 0, fail: 0, pending: 0 };
+export function summarize(rollup: RawCheck[]) {
+  const counts = { pass: 0, fail: 0, pending: 0, skipped: 0 };
   const failing: string[] = [];
   const list: z.infer<typeof checkItem>[] = [];
   for (const c of rollup) {
@@ -96,28 +101,30 @@ function summarize(rollup: RawCheck[]) {
     let state: z.infer<typeof checkItem>["state"];
     if (c.status === "WAITING" || outcome === "ACTION_REQUIRED") state = "action";
     else if (c.status && c.status !== "COMPLETED") state = "pending";
-    else if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(outcome)) state = "pass";
+    else if (["SUCCESS", "NEUTRAL"].includes(outcome)) state = "pass";
+    else if (outcome === "SKIPPED") state = "skipped";
     else if (["PENDING", "EXPECTED", ""].includes(outcome)) state = "pending";
     else state = "fail";
     if (state === "pass") counts.pass++;
+    else if (state === "skipped") counts.skipped++;
     else if (state === "fail") {
       counts.fail++;
       failing.push(name);
     } else counts.pending++;
     list.push({ name, state, url });
   }
-  const checks: Pr["checks"] =
-    rollup.length === 0
-      ? "none"
-      : counts.fail > 0
-        ? "fail"
-        : counts.pending > 0
-          ? "pending"
-          : "pass";
+  // Mixed pass + skipped stays "pass" (GitHub reports a skipped job as success);
+  // only an all-skipped rollup gets its own aggregate, since nothing ran.
+  let checks: Pr["checks"];
+  if (rollup.length === 0) checks = "none";
+  else if (counts.fail > 0) checks = "fail";
+  else if (counts.pending > 0) checks = "pending";
+  else if (counts.pass > 0) checks = "pass";
+  else checks = "skipped";
   return { counts, failing, checks, list };
 }
 
-function blocker(p: {
+export function blocker(p: {
   draft: boolean;
   mergeable: string;
   checks: Pr["checks"];
@@ -128,6 +135,13 @@ function blocker(p: {
   if (p.mergeable === "CONFLICTING") return "Merge conflicts";
   if (p.mergeable !== "MERGEABLE") return "GitHub is still computing mergeability";
   return null;
+}
+
+// A Binding approval check that has not passed; skipped counts as passed, like GitHub.
+export function bindingBlocked(list: z.infer<typeof checkItem>[]): boolean {
+  return list.some(
+    (c) => BINDING_CHECK.test(c.name) && c.state !== "pass" && c.state !== "skipped",
+  );
 }
 
 export default async function plugin(bb: BbPluginApi) {
@@ -235,12 +249,11 @@ export default async function plugin(bb: BbPluginApi) {
         (v) => v.author.login === login && v.commit?.oid === r.headRefOid && v.state !== "COMMENTED",
       );
       const approvedByMe = !!login && mine.at(-1)?.state === "APPROVED";
-      const bindingBlocked = list.some((c) => BINDING_CHECK.test(c.name) && c.state !== "pass");
       // GitHub rejects approving your own PR, so never offer it.
       const canApprove = !!login && r.author.login !== login;
       const requested = !!login && (r.reviewRequests ?? []).some((q) => q.login === login);
       let action: Pr["action"] = null;
-      if (bindingBlocked) {
+      if (bindingBlocked(list)) {
         if (approvedByMe) action = "rerun";
         else if (canApprove) action = "approve_rerun";
       } else if (requested && !approvedByMe && canApprove) {
