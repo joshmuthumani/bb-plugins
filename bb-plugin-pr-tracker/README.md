@@ -7,8 +7,12 @@ status in a right-panel tab, with a Merge button.
 
 - Adds a **Pull requests** tab to the thread right panel.
 - Lists open PRs grouped by repository, with a status dot:
-  green (passing), red (failing), pulsing yellow (running), grey (no checks).
-- Shows check counts and the names of failing checks.
+  green (passing), red (failing), pulsing yellow (running), grey (no checks,
+  or only skipped checks).
+- Shows a **Draft** badge on the title of every draft PR.
+- Shows check counts (`4 passed · 1 failed · 2 skipped`) and the names of
+  failing checks. Skipped checks are listed apart from passed ones, with a grey
+  dot and a `skipped` tag.
 - Refreshes every minute, or immediately with the refresh button.
 - Enables **Merge** only when checks pass, the PR is not a draft, and GitHub
   reports it as mergeable. Confirming squash-merges the PR.

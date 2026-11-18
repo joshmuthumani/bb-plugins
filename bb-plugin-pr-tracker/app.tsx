@@ -24,14 +24,17 @@ const dot: Record<Pr["checks"], string> = {
   fail: "bg-destructive",
   pending: "bg-yellow-500 animate-pulse",
   none: "bg-muted-foreground/40",
+  skipped: "bg-muted-foreground/40",
 };
 
 function checksLabel(pr: Pr) {
-  const { pass, fail, pending } = pr.counts;
+  const { pass, fail, pending, skipped } = pr.counts;
   if (pr.checks === "none") return "No checks";
+  if (pr.checks === "skipped") return `${skipped} skipped`;
   const parts = [`${pass} passed`];
   if (fail > 0) parts.push(`${fail} failed`);
   if (pending > 0) parts.push(`${pending} running`);
+  if (skipped > 0) parts.push(`${skipped} skipped`);
   return parts.join(" · ");
 }
 
@@ -82,15 +85,25 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
       <div className="flex items-start gap-2">
         <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", dot[pr.checks])} />
         <div className="min-w-0 flex-1">
-          <a
-            href={pr.url}
-            target="_blank"
-            rel="noreferrer"
-            className="block truncate font-medium hover:underline"
-            title={pr.title}
-          >
-            {pr.title}
-          </a>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <a
+              href={pr.url}
+              target="_blank"
+              rel="noreferrer"
+              className="block min-w-0 truncate font-medium hover:underline"
+              title={pr.title}
+            >
+              {pr.title}
+            </a>
+            {pr.draft ? (
+              <span
+                className="shrink-0 rounded border border-border px-1 text-[10px] font-medium text-muted-foreground"
+                title="Draft: not ready for review"
+              >
+                Draft
+              </span>
+            ) : null}
+          </div>
           <p className="truncate text-xs text-muted-foreground">
             #{pr.number} · {pr.author} · {pr.branch}
           </p>
@@ -129,6 +142,7 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
                   c.state === "fail" && "bg-destructive",
                   c.state === "pending" && "bg-yellow-500 animate-pulse",
                   c.state === "action" && "bg-yellow-500",
+                  c.state === "skipped" && "bg-muted-foreground/40",
                 )}
               />
               {c.url ? (
@@ -139,6 +153,7 @@ function PrRow({ pr, onChanged }: { pr: Pr; onChanged: () => void }) {
                 <span className="truncate">{c.name}</span>
               )}
               {c.state === "action" ? <span className="text-yellow-600">needs approval</span> : null}
+              {c.state === "skipped" ? <span className="text-muted-foreground">skipped</span> : null}
             </li>
           ))}
         </ul>

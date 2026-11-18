@@ -4,8 +4,10 @@ Review and merge pull requests without leaving BB.
 
 - A **Pull requests** tab in the thread right panel.
 - Every open PR in your configured repositories, grouped by repo.
-- Live check status: passing, failing, running, or none, with failing check
-  names listed inline.
+- Live check status: passing, failing, running, skipped, or none, with failing
+  check names listed inline. Skipped checks get a grey dot and a `skipped` tag
+  instead of counting as passed.
+- A **Draft** badge on the title of every draft PR.
 - A Merge button that stays disabled until checks are green, the PR is not a
   draft, and GitHub reports no conflicts. Confirming performs a squash merge.
 - A refresh button plus a one-minute automatic refresh.
