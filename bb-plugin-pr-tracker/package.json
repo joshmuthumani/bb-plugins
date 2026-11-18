@@ -46,5 +46,8 @@
     "sonner": "^1.7.4",
     "tailwind-merge": "^3.4.0",
     "vaul": "^1.1.2"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test server.test.ts"
   }
 }
