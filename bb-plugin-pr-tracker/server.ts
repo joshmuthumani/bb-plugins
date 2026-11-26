@@ -131,10 +131,11 @@ export function summarize(rollup: RawCheck[]) {
   return { counts, failing, checks, list };
 }
 
-export async function safeChecks(fetch: () => Promise<RawCheck[]>) {
+export async function safeChecks(fetch: () => Promise<RawCheck[]>, onError: (cause: unknown) => void = () => {}) {
   try {
     return summarize(await fetch());
-  } catch {
+  } catch (cause) {
+    onError(cause);
     return summarize([{ name: "Checks unavailable", status: "IN_PROGRESS" }]);
   }
 }
@@ -287,7 +288,7 @@ export default async function plugin(bb: BbPluginApi) {
     const prs: Pr[] = [];
     for (let i = 0; i < rows.length; i += 5) {
       const batch = rows.slice(i, i + 5);
-      const results = await Promise.all(batch.map((r) => safeChecks(() => checksForPr(repo, r.number, r.headRefOid))));
+      const results = await Promise.all(batch.map((r) => safeChecks(() => checksForPr(repo, r.number, r.headRefOid), (cause) => bb.log.warn(`Checks unavailable for ${repo}#${r.number}: ${cause instanceof Error ? cause.message : String(cause)}`))));
       for (const [index, r] of batch.entries()) {
       const { counts, failing, checks, list } = results[index];
       const needsYou = list
