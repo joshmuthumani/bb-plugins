@@ -85,6 +85,7 @@ type RawCheck = {
   context?: string;
   detailsUrl?: string;
   targetUrl?: string;
+  checkSuite?: { createdAt?: string; workflowRun?: { workflow?: { id?: string } | null } | null } | null;
 };
 
 // Fold CheckRun and StatusContext entries into pass/fail/pending/skipped counts.
@@ -95,6 +96,12 @@ export function summarize(rollup: RawCheck[]) {
   const failing: string[] = [];
   const list: z.infer<typeof checkItem>[] = [];
   for (const c of rollup) {
+    const workflow = c.checkSuite?.workflowRun?.workflow?.id;
+    const createdAt = c.checkSuite?.createdAt;
+    if (workflow && c.name && createdAt && rollup.some((other) =>
+      other.name === c.name && other.checkSuite?.workflowRun?.workflow?.id === workflow &&
+      !!other.checkSuite.createdAt && other.checkSuite.createdAt > createdAt
+    )) continue;
     const name = c.name ?? c.context ?? "check";
     const url = c.detailsUrl || c.targetUrl || null;
     const outcome = c.conclusion ?? c.state ?? "";
@@ -213,12 +220,46 @@ export default async function plugin(bb: BbPluginApi) {
     return me;
   }
 
+  async function checksForPr(repo: string, number: number, headOid: string): Promise<RawCheck[]> {
+    const [owner, name] = repo.split("/");
+    const query = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+        commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            __typename
+            ... on CheckRun { name status conclusion detailsUrl checkSuite { createdAt workflowRun { workflow { id } } } }
+            ... on StatusContext { context state targetUrl }
+          }
+        } } } } }
+      } }
+    }`;
+    const checks: RawCheck[] = [];
+    let cursor: string | null = null;
+    do {
+      const args = ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`];
+      if (cursor) args.push("-f", `cursor=${cursor}`);
+      const response = JSON.parse(await gh(args));
+      const commit = response.data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit;
+      if (!commit || commit.oid !== headOid) throw new Error(`PR #${number} head changed while fetching checks`);
+      const contexts = commit.statusCheckRollup?.contexts;
+      if (!contexts) {
+        if (commit.statusCheckRollup !== null || checks.length || cursor) throw new Error(`Missing check results for PR #${number}`);
+        return [];
+      }
+      checks.push(...contexts.nodes);
+      if (contexts.pageInfo.hasNextPage && !contexts.pageInfo.endCursor) throw new Error(`Missing check cursor for PR #${number}`);
+      cursor = contexts.pageInfo.hasNextPage ? contexts.pageInfo.endCursor : null;
+    } while (cursor);
+    return checks;
+  }
+
   async function fetchPrs(repo: string): Promise<Pr[]> {
     const [out, login] = await Promise.all([
       gh([
         "pr", "list", "-R", repo, "--state", "open", "--limit", "30",
         "--json",
-        "number,title,author,url,headRefName,headRefOid,isDraft,mergeable,reviewDecision,statusCheckRollup,reviewRequests,reviews",
+        "number,title,author,url,headRefName,headRefOid,isDraft,mergeable,reviewDecision,reviewRequests,reviews",
       ]),
       viewer(),
     ]);
@@ -232,12 +273,11 @@ export default async function plugin(bb: BbPluginApi) {
       isDraft: boolean;
       mergeable: string;
       reviewDecision: string;
-      statusCheckRollup: RawCheck[] | null;
       reviewRequests: Array<{ login?: string }>;
       reviews: Array<{ author: { login: string }; state: string; commit?: { oid: string } }>;
     }>;
-    return rows.map((r) => {
-      const { counts, failing, checks, list } = summarize(r.statusCheckRollup ?? []);
+    return Promise.all(rows.map(async (r) => {
+      const { counts, failing, checks, list } = summarize(await checksForPr(repo, r.number, r.headRefOid));
       const needsYou = list
         .filter((c) => c.state === "action")
         .map((c) => `Approval needed: ${c.name}`);
@@ -277,7 +317,7 @@ export default async function plugin(bb: BbPluginApi) {
         action,
         mergeBlocker: blocker({ draft: r.isDraft, mergeable: r.mergeable, checks }),
       };
-    });
+    }));
   }
 
   bb.rpc.register(rpcContract, {

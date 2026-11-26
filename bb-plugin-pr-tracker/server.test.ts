@@ -9,6 +9,20 @@ const run = (name: string, conclusion: string) => ({
   conclusion,
 });
 
+test("superseded workflow runs do not mask the newest check", () => {
+  const check = (workflow: string, createdAt: string, conclusion: string) => ({
+    ...run("work-item-link", conclusion),
+    checkSuite: { createdAt, workflowRun: { workflow: { id: workflow } } },
+  });
+  const old = check("workflow-1", "2026-11-26T05:30:21Z", "CANCELLED");
+  const latest = check("workflow-1", "2026-11-26T05:30:25Z", "SUCCESS");
+  assert.equal(summarize([old, latest]).checks, "pass");
+  assert.equal(summarize([latest, old]).checks, "pass");
+  assert.equal(summarize([latest, check("workflow-1", "2026-11-26T05:31:00Z", "FAILURE")]).checks, "fail");
+  assert.equal(summarize([old, check("workflow-2", "2026-11-26T05:31:00Z", "SUCCESS")]).checks, "fail");
+  assert.equal(summarize([run("work-item-link", "CANCELLED"), latest]).checks, "fail");
+});
+
 test("AC1: SKIPPED is its own state; SUCCESS and NEUTRAL stay passed", () => {
   const r = summarize([run("a", "SKIPPED"), run("b", "SUCCESS"), run("c", "NEUTRAL")]);
   assert.deepEqual(
