@@ -438,8 +438,15 @@ export default async function plugin(bb: BbPluginApi) {
         // gh lists newest first.
         const target = runs.find((x) => x.workflowName === REVIEW_WORKFLOW);
         if (!target) throw new Error(`no "${REVIEW_WORKFLOW}" run found for this commit`);
-        await gh(["run", "rerun", String(target.databaseId), "-R", canonical]);
-        bb.log.info(`re-ran ${REVIEW_WORKFLOW} ${canonical}#${number}`);
+        try {
+          await gh(["run", "rerun", String(target.databaseId), "-R", canonical]);
+          bb.log.info(`re-ran ${REVIEW_WORKFLOW} ${canonical}#${number}`);
+        } catch (cause) {
+          // The approval itself starts a fresh run; GitHub refuses to rerun one in flight.
+          const msg = cause instanceof Error ? cause.message : String(cause);
+          if (!/already running/i.test(msg)) throw cause;
+          bb.log.info(`${REVIEW_WORKFLOW} ${canonical}#${number} already running; skipped re-run`);
+        }
       } catch (cause) {
         const why = cause instanceof Error ? cause.message : String(cause);
         throw new Error(`${approved ? "Approved, but " : ""}re-run failed: ${why}`);
