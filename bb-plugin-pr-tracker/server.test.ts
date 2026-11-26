@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bindingBlocked, blocker, summarize } from "./server.ts";
+import { bindingBlocked, blocker, summarize, safeChecks } from "./server.ts";
+
+test("a check-fetch error keeps the PR visible and blocks merging", async () => {
+  const result = await safeChecks(async () => { throw new Error("network error"); });
+  assert.equal(result.checks, "pending");
+  assert.equal(blocker({ draft: false, mergeable: "MERGEABLE", checks: result.checks }), "Checks still running");
+});
 
 const run = (name: string, conclusion: string) => ({
   __typename: "CheckRun",

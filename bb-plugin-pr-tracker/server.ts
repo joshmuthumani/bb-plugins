@@ -131,6 +131,14 @@ export function summarize(rollup: RawCheck[]) {
   return { counts, failing, checks, list };
 }
 
+export async function safeChecks(fetch: () => Promise<RawCheck[]>) {
+  try {
+    return summarize(await fetch());
+  } catch {
+    return summarize([{ name: "Checks unavailable", status: "IN_PROGRESS" }]);
+  }
+}
+
 export function blocker(p: {
   draft: boolean;
   mergeable: string;
@@ -276,8 +284,9 @@ export default async function plugin(bb: BbPluginApi) {
       reviewRequests: Array<{ login?: string }>;
       reviews: Array<{ author: { login: string }; state: string; commit?: { oid: string } }>;
     }>;
-    return Promise.all(rows.map(async (r) => {
-      const { counts, failing, checks, list } = summarize(await checksForPr(repo, r.number, r.headRefOid));
+    const prs: Pr[] = [];
+    for (const r of rows) {
+      const { counts, failing, checks, list } = await safeChecks(() => checksForPr(repo, r.number, r.headRefOid));
       const needsYou = list
         .filter((c) => c.state === "action")
         .map((c) => `Approval needed: ${c.name}`);
@@ -299,7 +308,7 @@ export default async function plugin(bb: BbPluginApi) {
       } else if (requested && !approvedByMe && canApprove) {
         action = "approve";
       }
-      return {
+      prs.push({
         repo,
         number: r.number,
         title: r.title,
@@ -316,8 +325,9 @@ export default async function plugin(bb: BbPluginApi) {
         needsYou,
         action,
         mergeBlocker: blocker({ draft: r.isDraft, mergeable: r.mergeable, checks }),
-      };
-    }));
+      });
+    }
+    return prs;
   }
 
   bb.rpc.register(rpcContract, {
