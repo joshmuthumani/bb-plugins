@@ -100,7 +100,7 @@ export function summarize(rollup: RawCheck[]) {
     const createdAt = c.checkSuite?.createdAt;
     if (workflow && c.name && createdAt && rollup.some((other) =>
       other.name === c.name && other.checkSuite?.workflowRun?.workflow?.id === workflow &&
-      !!other.checkSuite.createdAt && other.checkSuite.createdAt > createdAt
+      !!other.checkSuite.createdAt && Date.parse(other.checkSuite.createdAt) > Date.parse(createdAt)
     )) continue;
     const name = c.name ?? c.context ?? "check";
     const url = c.detailsUrl || c.targetUrl || null;
@@ -285,8 +285,11 @@ export default async function plugin(bb: BbPluginApi) {
       reviews: Array<{ author: { login: string }; state: string; commit?: { oid: string } }>;
     }>;
     const prs: Pr[] = [];
-    for (const r of rows) {
-      const { counts, failing, checks, list } = await safeChecks(() => checksForPr(repo, r.number, r.headRefOid));
+    for (let i = 0; i < rows.length; i += 5) {
+      const batch = rows.slice(i, i + 5);
+      const results = await Promise.all(batch.map((r) => safeChecks(() => checksForPr(repo, r.number, r.headRefOid))));
+      for (const [index, r] of batch.entries()) {
+      const { counts, failing, checks, list } = results[index];
       const needsYou = list
         .filter((c) => c.state === "action")
         .map((c) => `Approval needed: ${c.name}`);
@@ -326,6 +329,7 @@ export default async function plugin(bb: BbPluginApi) {
         action,
         mergeBlocker: blocker({ draft: r.isDraft, mergeable: r.mergeable, checks }),
       });
+      }
     }
     return prs;
   }
