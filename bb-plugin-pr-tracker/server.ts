@@ -146,9 +146,9 @@ export function blocker(p: {
   checks: Pr["checks"];
 }): string | null {
   if (p.draft) return "Draft PR";
+  if (p.mergeable === "CONFLICTING") return "Merge conflicts";
   if (p.checks === "fail") return "Checks failing";
   if (p.checks === "pending") return "Checks still running";
-  if (p.mergeable === "CONFLICTING") return "Merge conflicts";
   if (p.mergeable !== "MERGEABLE") return "GitHub is still computing mergeability";
   return null;
 }

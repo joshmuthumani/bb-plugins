@@ -90,6 +90,7 @@ test("AC4: blocker is unchanged for every aggregate", () => {
   assert.equal(blocker({ draft: true, mergeable: "MERGEABLE", checks: "skipped" }), "Draft PR");
   assert.equal(blocker({ draft: true, mergeable: "MERGEABLE", checks: "pass" }), "Draft PR");
   assert.equal(blocker({ ...ok, mergeable: "CONFLICTING", checks: "skipped" }), "Merge conflicts");
+  assert.equal(blocker({ ...ok, mergeable: "CONFLICTING", checks: "pending" }), "Merge conflicts");
   assert.equal(
     blocker({ ...ok, mergeable: "UNKNOWN", checks: "skipped" }),
     "GitHub is still computing mergeability",
